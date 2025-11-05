@@ -110,7 +110,10 @@ export default function App(){
   const [aggregateAttrName, setAggregateAttrName] = useState('Options');
   const [aggregation, setAggregation] = useState({});
 
-  function addInput(){ setInputs(s=>[...s, {id:Date.now()+Math.random(), json:'', filter:''}]); }
+  function addInput(){
+    const newItem = {id:Date.now()+Math.random(), json:'', filter:'', error:null, lastApplied:null};
+    setInputs(s=>[newItem, ...s]);
+  }
   function removeInput(id){ setInputs(s=>s.filter(x=>x.id!==id)); }
   function updateInput(id, changes){ setInputs(s=>s.map(x=> x.id===id ? {...x,...changes} : x)); }
 
@@ -201,6 +204,39 @@ export default function App(){
       <h1>JSON Merger & Filter (React)</h1>
       <p className="lead">Paste multiple JSON responses, provide per-input filter paths (e.g. <code>prodAttrs[0].attrvalue</code>), then merge.</p>
 
+      <div className="controls">
+        <div style={{display:'flex',gap:12,flexWrap:'wrap',alignItems:'center'}}>
+          <button onClick={addInput}>+ Add input</button>
+          <label style={{marginLeft:12}}><input type="checkbox" checked={dedupe} onChange={e=>setDedupe(e.target.checked)} /> Deduplicate by <code style={{marginLeft:6}}>reviewid</code></label>
+          <button className="primary" onClick={merge} style={{marginLeft:12}}>Merge</button>
+        </div>
+
+        <div style={{marginTop:12,display:'flex',gap:12,alignItems:'center',flexWrap:'wrap'}}>
+          <label style={{display:'flex',alignItems:'center',gap:8}}>Universal filter (applies when per-input filter is empty):
+            <input style={{marginLeft:6,padding:6,borderRadius:6}} value={universalFilter} onChange={e=>setUniversalFilter(e.target.value)} placeholder="e.g. data.data.prodAttrs[0].attrvalue" />
+          </label>
+          <button onClick={()=>merge()}>Apply universal</button>
+        </div>
+
+        <div style={{marginTop:12,display:'flex',gap:12,alignItems:'center',flexWrap:'wrap'}}>
+          <label style={{display:'flex',alignItems:'center',gap:8}}>Aggregate prodAttrs where <code>attrname</code> =
+            <input style={{marginLeft:6,padding:6,borderRadius:6}} value={aggregateAttrName} onChange={e=>setAggregateAttrName(e.target.value)} />
+          </label>
+          <button onClick={()=>(
+            // compute from current result if available
+            (()=>{
+              try{
+                const parsed = result ? JSON.parse(result) : null;
+                const items = parsed && parsed.data && Array.isArray(parsed.data.data) ? parsed.data.data : [];
+                computeAggregationFromItems(items, aggregateAttrName);
+              }catch(e){
+                // if result not JSON, do nothing
+              }
+            })()
+          )}>Compute counts</button>
+        </div>
+      </div>
+
       <div className="inputs">
         {inputs.map(it=> (
           <InputBlock
@@ -216,35 +252,6 @@ export default function App(){
             onApply={()=>merge(it.id)}
           />
         ))}
-      </div>
-
-      <div className="controls">
-        <button onClick={addInput}>+ Add input</button>
-        <label style={{marginLeft:12}}><input type="checkbox" checked={dedupe} onChange={e=>setDedupe(e.target.checked)} /> Deduplicate by <code style={{marginLeft:6}}>reviewid</code></label>
-        <button className="primary" onClick={merge} style={{marginLeft:12}}>Merge</button>
-      </div>
-
-      <div style={{marginTop:12,marginBottom:6,display:'flex',gap:12,alignItems:'center'}}>
-        <label style={{display:'flex',alignItems:'center',gap:8}}>Universal filter (applies when per-input filter is empty):
-          <input style={{marginLeft:6,padding:6,borderRadius:6}} value={universalFilter} onChange={e=>setUniversalFilter(e.target.value)} placeholder="e.g. data.data.prodAttrs[0].attrvalue" />
-        </label>
-        <button onClick={()=>merge()}>Apply universal</button>
-      </div>
-
-      <div style={{marginTop:12,marginBottom:6,display:'flex',gap:12,alignItems:'center'}}>
-        <label style={{display:'flex',alignItems:'center',gap:8}}>Aggregate prodAttrs where <code>attrname</code> =
-          <input style={{marginLeft:6,padding:6,borderRadius:6}} value={aggregateAttrName} onChange={e=>setAggregateAttrName(e.target.value)} />
-        </label>
-        <button onClick={()=>{
-          // compute from current result if available
-          try{
-            const parsed = result ? JSON.parse(result) : null;
-            const items = parsed && parsed.data && Array.isArray(parsed.data.data) ? parsed.data.data : [];
-            computeAggregationFromItems(items, aggregateAttrName);
-          }catch(e){
-            // if result not JSON, do nothing
-          }
-        }}>Compute counts</button>
       </div>
 
       <section className="output">

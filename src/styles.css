@@ -4,7 +4,8 @@ body{font-family:Inter,Segoe UI,system-ui,Roboto,Arial;margin:24px;background:li
 .container{max-width:1100px;margin:0 auto}
 h1{margin:0 0 6px}
 .lead{color:var(--muted);margin:0 0 18px}
-.input-block{background:rgba(255,255,255,0.02);border:1px solid rgba(255,255,255,0.03);padding:12px;border-radius:8px;margin-bottom:12px}
+.input-block{background:rgba(255,255,255,0.02);border:1px solid rgba(255,255,255,0.03);padding:12px;border-radius:8px;margin-bottom:0}
+.inputs{display:grid;grid-template-columns:repeat(auto-fit,minmax(420px,1fr));gap:12px;align-items:start;margin-bottom:12px}
 .input-header{display:flex;justify-content:space-between;align-items:center;margin-bottom:8px}
 .jsonInput{width:100%;min-height:140px;background:#071322;border:1px solid rgba(255,255,255,0.03);color:#e8f6ff;padding:10px;border-radius:6px;font-family:menlo,monospace;font-size:13px}
 .filter-row{margin-top:8px;display:flex;align-items:center;gap:10px}
