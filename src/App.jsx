@@ -80,9 +80,17 @@ function mergeParsedResponses(list, opts){
   let finalItems = mergedItems;
   if(opts.dedupe){
     const seen = new Set();
+    // Only dedupe items that include a reviewid. If an item doesn't have reviewid (e.g. user filtered it out),
+    // keep it — deduping by JSON string would collapse distinct items that happen to share the same filtered value.
     finalItems = mergedItems.filter(it=>{
-      const id = (it && typeof it.reviewid!=='undefined') ? String(it.reviewid) : JSON.stringify(it);
-      if(seen.has(id)) return false; seen.add(id); return true;
+      if(it && typeof it.reviewid !== 'undefined'){
+        const id = String(it.reviewid);
+        if(seen.has(id)) return false;
+        seen.add(id);
+        return true;
+      }
+      // keep items without reviewid (don't dedupe)
+      return true;
     });
   }
   base.data = base.data || {};
@@ -94,26 +102,63 @@ function mergeParsedResponses(list, opts){
 }
 
 export default function App(){
-  const [inputs, setInputs] = useState([ {id:Date.now(), json:'', filter:''} ]);
+  const [inputs, setInputs] = useState([ {id:Date.now(), json:'', filter:'', error:null, lastApplied:null} ]);
   const [result, setResult] = useState('');
   const [dedupe, setDedupe] = useState(true);
   const [pretty, setPretty] = useState(true);
+  const [aggregateAttrName, setAggregateAttrName] = useState('Options');
+  const [aggregation, setAggregation] = useState({});
 
   function addInput(){ setInputs(s=>[...s, {id:Date.now()+Math.random(), json:'', filter:''}]); }
   function removeInput(id){ setInputs(s=>s.filter(x=>x.id!==id)); }
   function updateInput(id, changes){ setInputs(s=>s.map(x=> x.id===id ? {...x,...changes} : x)); }
 
-  function merge(){
+  // Merge inputs; if appliedInputId is provided, mark that input as lastApplied
+  function merge(appliedInputId){
     const parsedList = [];
+    let hadError = false;
     for(const it of inputs){
-      if(!it.json.trim()) continue;
+      if(!it.json || !it.json.trim()) continue;
       try{
         const parsed = JSON.parse(it.json);
+        // clear any previous error
+        if(it.error) updateInput(it.id, {error: null});
         parsedList.push({parsed, filter: it.filter || ''});
-      }catch(e){ alert('Invalid JSON in one input: '+e.message); return; }
+      }catch(e){
+        // set per-input error and skip merging this input
+        hadError = true;
+        updateInput(it.id, {error: 'Invalid JSON: '+e.message});
+      }
+    }
+    if(hadError){
+      // do not produce a merged result until inputs are valid
+      return;
     }
     const merged = mergeParsedResponses(parsedList, {dedupe});
-    setResult(pretty ? JSON.stringify(merged, null, 2) : JSON.stringify(merged));
+    const text = pretty ? JSON.stringify(merged, null, 2) : JSON.stringify(merged);
+    setResult(text);
+    // compute aggregation counts based on merged items
+    computeAggregationFromItems(merged.data && Array.isArray(merged.data.data) ? merged.data.data : [], aggregateAttrName);
+    if(appliedInputId) updateInput(appliedInputId, {lastApplied: Date.now()});
+  }
+
+  function computeAggregationFromItems(items, attrName){
+    const counts = {};
+    if(!Array.isArray(items)){
+      setAggregation({});
+      return;
+    }
+    items.forEach(item=>{
+      if(!item || !Array.isArray(item.prodAttrs)) return;
+      item.prodAttrs.forEach(p=>{
+        if(!p) return;
+        if(p.attrname === attrName){
+          const v = String(typeof p.attrvalue === 'undefined' || p.attrvalue === null ? '' : p.attrvalue);
+          counts[v] = (counts[v] || 0) + 1;
+        }
+      });
+    });
+    setAggregation(counts);
   }
 
   function copyResult(){ navigator.clipboard.writeText(result).then(()=>alert('Copied')); }
@@ -155,8 +200,18 @@ export default function App(){
 
       <div className="inputs">
         {inputs.map(it=> (
-          <InputBlock key={it.id} id={it.id} json={it.json} filter={it.filter}
-            onChange={(changes)=>updateInput(it.id, changes)} onRemove={()=>removeInput(it.id)} onLoadSample={()=>loadSample(it.id)} />
+          <InputBlock
+            key={it.id}
+            id={it.id}
+            json={it.json}
+            filter={it.filter}
+            error={it.error}
+            lastApplied={it.lastApplied}
+            onChange={(changes)=>updateInput(it.id, changes)}
+            onRemove={()=>removeInput(it.id)}
+            onLoadSample={()=>loadSample(it.id)}
+            onApply={()=>merge(it.id)}
+          />
         ))}
       </div>
 
@@ -166,8 +221,37 @@ export default function App(){
         <button className="primary" onClick={merge} style={{marginLeft:12}}>Merge</button>
       </div>
 
+      <div style={{marginTop:12,marginBottom:6,display:'flex',gap:12,alignItems:'center'}}>
+        <label style={{display:'flex',alignItems:'center',gap:8}}>Aggregate prodAttrs where <code>attrname</code> =
+          <input style={{marginLeft:6,padding:6,borderRadius:6}} value={aggregateAttrName} onChange={e=>setAggregateAttrName(e.target.value)} />
+        </label>
+        <button onClick={()=>{
+          // compute from current result if available
+          try{
+            const parsed = result ? JSON.parse(result) : null;
+            const items = parsed && parsed.data && Array.isArray(parsed.data.data) ? parsed.data.data : [];
+            computeAggregationFromItems(items, aggregateAttrName);
+          }catch(e){
+            // if result not JSON, do nothing
+          }
+        }}>Compute counts</button>
+      </div>
+
       <section className="output">
         <h2>Merged JSON</h2>
+        <div style={{marginBottom:8}}>
+          <strong>Aggregation results</strong>
+          {Object.keys(aggregation).length===0 ? <div style={{color:'#9aa6b2'}}>No aggregation yet</div> : (
+            <div style={{marginTop:6}}>
+              {Object.entries(aggregation).sort((a,b)=>b[1]-a[1]).map(([val,c])=> (
+                <div key={val} style={{display:'flex',justifyContent:'space-between',gap:12,padding:'4px 0'}}>
+                  <div style={{flex:1}}>{val || '(empty)'}</div>
+                  <div style={{color:'#9aa6b2'}}>{c}</div>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
         <div className="output-actions">
           <button onClick={copyResult}>Copy</button>
           <button onClick={downloadResult}>Download</button>
