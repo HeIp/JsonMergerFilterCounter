@@ -104,8 +104,9 @@ function mergeParsedResponses(list, opts){
 export default function App(){
   const [inputs, setInputs] = useState([ {id:Date.now(), json:'', filter:'', error:null, lastApplied:null} ]);
   const [result, setResult] = useState('');
-  const [dedupe, setDedupe] = useState(true);
+  const [dedupe, setDedupe] = useState(false);
   const [pretty, setPretty] = useState(true);
+  const [universalFilter, setUniversalFilter] = useState('');
   const [aggregateAttrName, setAggregateAttrName] = useState('Options');
   const [aggregation, setAggregation] = useState({});
 
@@ -123,7 +124,9 @@ export default function App(){
         const parsed = JSON.parse(it.json);
         // clear any previous error
         if(it.error) updateInput(it.id, {error: null});
-        parsedList.push({parsed, filter: it.filter || ''});
+        // use per-input filter if provided, otherwise fall back to universalFilter
+        const filterToUse = (it.filter && it.filter.trim()) ? it.filter : (universalFilter && universalFilter.trim() ? universalFilter : '');
+        parsedList.push({parsed, filter: filterToUse});
       }catch(e){
         // set per-input error and skip merging this input
         hadError = true;
@@ -219,6 +222,13 @@ export default function App(){
         <button onClick={addInput}>+ Add input</button>
         <label style={{marginLeft:12}}><input type="checkbox" checked={dedupe} onChange={e=>setDedupe(e.target.checked)} /> Deduplicate by <code style={{marginLeft:6}}>reviewid</code></label>
         <button className="primary" onClick={merge} style={{marginLeft:12}}>Merge</button>
+      </div>
+
+      <div style={{marginTop:12,marginBottom:6,display:'flex',gap:12,alignItems:'center'}}>
+        <label style={{display:'flex',alignItems:'center',gap:8}}>Universal filter (applies when per-input filter is empty):
+          <input style={{marginLeft:6,padding:6,borderRadius:6}} value={universalFilter} onChange={e=>setUniversalFilter(e.target.value)} placeholder="e.g. data.data.prodAttrs[0].attrvalue" />
+        </label>
+        <button onClick={()=>merge()}>Apply universal</button>
       </div>
 
       <div style={{marginTop:12,marginBottom:6,display:'flex',gap:12,alignItems:'center'}}>
