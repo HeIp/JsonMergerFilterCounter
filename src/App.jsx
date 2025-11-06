@@ -109,10 +109,12 @@ export default function App(){
   const [universalFilter, setUniversalFilter] = useState('');
   const [aggregateAttrName, setAggregateAttrName] = useState('Options');
   const [aggregation, setAggregation] = useState({});
+  const [focusId, setFocusId] = useState(null);
 
   function addInput(){
     const newItem = {id:Date.now()+Math.random(), json:'', filter:'', error:null, lastApplied:null};
     setInputs(s=>[newItem, ...s]);
+    setFocusId(newItem.id);
   }
   function removeInput(id){ setInputs(s=>s.filter(x=>x.id!==id)); }
   function updateInput(id, changes){ setInputs(s=>s.map(x=> x.id===id ? {...x,...changes} : x)); }
@@ -146,6 +148,14 @@ export default function App(){
     // compute aggregation counts based on merged items
     computeAggregationFromItems(merged.data && Array.isArray(merged.data.data) ? merged.data.data : [], aggregateAttrName);
     if(appliedInputId) updateInput(appliedInputId, {lastApplied: Date.now()});
+  }
+
+  function clearAll(){
+    const ok = window.confirm('Clear all inputs and results? This cannot be undone.');
+    if(!ok) return;
+    setInputs([{id:Date.now(), json:'', filter:'', error:null, lastApplied:null}]);
+    setResult('');
+    setAggregation({});
   }
 
   function computeAggregationFromItems(items, attrName){
@@ -201,6 +211,7 @@ export default function App(){
 
   return (
     <div className="app container">
+      <button className="clear-all" onClick={clearAll}>Clear All</button>
       <h1>JSON Merger & Filter (React)</h1>
       <p className="lead">Paste multiple JSON responses, provide per-input filter paths (e.g. <code>prodAttrs[0].attrvalue</code>), then merge.</p>
 
@@ -250,6 +261,9 @@ export default function App(){
             onRemove={()=>removeInput(it.id)}
             onLoadSample={()=>loadSample(it.id)}
             onApply={()=>merge(it.id)}
+            autoFocus={focusId === it.id}
+            onFocused={()=> setFocusId(null)}
+            usingUniversal={!(it.filter && it.filter.trim()) && (universalFilter && universalFilter.trim())}
           />
         ))}
       </div>

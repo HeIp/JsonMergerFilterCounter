@@ -6,6 +6,19 @@ h1{margin:0 0 6px}
 .lead{color:var(--muted);margin:0 0 18px}
 .input-block{background:rgba(255,255,255,0.02);border:1px solid rgba(255,255,255,0.03);padding:12px;border-radius:8px;margin-bottom:0}
 .inputs{display:grid;grid-template-columns:repeat(auto-fit,minmax(420px,1fr));gap:12px;align-items:start;margin-bottom:12px}
+.badge{background:rgba(255,255,255,0.04);color:var(--muted);padding:4px 8px;border-radius:999px;font-size:12px}
+
+/* Clear-all fixed button */
+.clear-all{position:fixed;right:20px;top:20px;background:#111827;color:#e6eef6;border:1px solid rgba(255,255,255,0.06);padding:8px 10px;border-radius:8px;z-index:1200;cursor:pointer}
+.clear-all:hover{box-shadow:0 6px 18px rgba(0,0,0,0.5)}
+
+/* Focus animation on newly added input */
+.input-block.focused{animation:focusPulse 700ms ease}
+@keyframes focusPulse{
+	0%{transform:translateY(-6px);box-shadow:0 8px 24px rgba(6,182,212,0.06);border-color:rgba(6,182,212,0.4)}
+	50%{transform:translateY(0);box-shadow:0 14px 40px rgba(6,182,212,0.06)}
+	100%{transform:none;box-shadow:none}
+}
 .input-header{display:flex;justify-content:space-between;align-items:center;margin-bottom:8px}
 .jsonInput{width:100%;min-height:140px;background:#071322;border:1px solid rgba(255,255,255,0.03);color:#e8f6ff;padding:10px;border-radius:6px;font-family:menlo,monospace;font-size:13px}
 .filter-row{margin-top:8px;display:flex;align-items:center;gap:10px}
