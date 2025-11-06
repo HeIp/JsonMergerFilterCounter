@@ -135,6 +135,8 @@ export default function App(){
   const presets = [
     {name:'prodAttrs (attrname -> attrvalue)',
      matchPath:'prodAttrs[*].attrname', matchValue:'Options', countPath:'prodAttrs[*].attrvalue', universal:'prodAttrs[*].attrvalue'},
+   {name:'Options → attrvalue',
+    matchPath:'prodAttrs[*].attrname', matchValue:'Options', countPath:'prodAttrs[*].attrvalue', universal:'prodAttrs[*].attrvalue'},
     {name:'reviews (data.data[*] items)',
      matchPath:'data.data[*].reviewid', matchValue:'', countPath:'data.data[*].productid', universal:'data.data[*].reviewid'},
     {name:'items (generic items array)',
@@ -184,10 +186,15 @@ export default function App(){
       return;
     }
     const merged = mergeParsedResponses(parsedList, {dedupe});
+    // compute aggregation counts synchronously and attach to merged result
+    try{
+      const items = merged.data && Array.isArray(merged.data.data) ? merged.data.data : [];
+      const counts = computeAggregationCounts(items, aggregateMatchPath || `prodAttrs[*].attrname`, aggregateMatchValue || aggregateAttrName || 'Options', aggregateCountPath || `prodAttrs[*].attrvalue`);
+      setAggregation(counts);
+      if(counts && Object.keys(counts).length) merged.aggregation = counts;
+    }catch(e){ /* ignore */ }
     const text = pretty ? JSON.stringify(merged, null, 2) : JSON.stringify(merged);
     setResult(text);
-    // compute aggregation counts based on merged items (use generic options)
-    computeAggregationFromOptions(merged.data && Array.isArray(merged.data.data) ? merged.data.data : [], aggregateMatchPath || `prodAttrs[*].attrname`, aggregateMatchValue || aggregateAttrName || 'Options', aggregateCountPath || `prodAttrs[*].attrvalue`);
     if(appliedInputId) updateInput(appliedInputId, {lastApplied: Date.now()});
   }
 
@@ -250,12 +257,11 @@ export default function App(){
       return walk(obj, 0);
     }
 
-    // Generic aggregation: iterate items and, if matchPath and countPath share same array root, pair elements
-    function computeAggregationFromOptions(items, matchPath, matchValue, countPath){
+    // Generic aggregation: compute counts (pure) and setter wrapper
+    function computeAggregationCounts(items, matchPath, matchValue, countPath){
       const counts = {};
-      if(!Array.isArray(items)){ setAggregation({}); return; }
+      if(!Array.isArray(items)) return counts;
 
-      // find array root prefix (string before first [*]) for match and count
       function rootBeforeWildcard(path){
         const i = path.indexOf('[*]');
         if(i===-1) return null;
@@ -267,10 +273,6 @@ export default function App(){
 
       items.forEach(item=>{
         if(matchRoot && countRoot && matchRoot === countRoot){
-          // iterate the shared array
-          const arr = getValuesByPath(item, matchRoot + '[*]');
-          // get actual array elements at the root
-          // getValuesByPath returns array of elements after walking further; to get elements themselves, fetch root array
           const rootTokens = parsePath(matchRoot);
           const rootArr = (function(){
             let cur = item;
@@ -278,20 +280,20 @@ export default function App(){
             return cur;
           })();
           if(!Array.isArray(rootArr)) return;
-          // determine remainder paths after root
-          const remMatch = matchPath.slice(matchRoot.length + 3); // remove '[*]'
-          const remCount = countPath.slice(countRoot.length + 3);
+          let remMatch = matchPath.slice(matchRoot.length + 3);
+          let remCount = countPath.slice(countRoot.length + 3);
+          // remove leading dot if present (e.g. '.attrname')
+          if(remMatch.startsWith('.')) remMatch = remMatch.slice(1);
+          if(remCount.startsWith('.')) remCount = remCount.slice(1);
           rootArr.forEach(el=>{
             const mvals = remMatch ? getValuesByPath(el, remMatch) : [el];
             const cvals = remCount ? getValuesByPath(el, remCount) : [el];
-            // if any match value equals matchValue, count corresponding cvals
             const matched = mvals.some(v=>String(v) === String(matchValue));
             if(matched){
               cvals.forEach(cv=>{ const key = String(cv==null ? '' : cv); counts[key] = (counts[key]||0) + 1; });
             }
           });
         } else {
-          // fallback: if any value at matchPath equals matchValue, then count all values at countPath
           const mvals = getValuesByPath(item, matchPath);
           const found = mvals.some(v=>String(v) === String(matchValue));
           if(found){
@@ -301,6 +303,11 @@ export default function App(){
         }
       });
 
+      return counts;
+    }
+
+    function computeAggregationFromOptions(items, matchPath, matchValue, countPath){
+      const counts = computeAggregationCounts(items, matchPath, matchValue, countPath);
       setAggregation(counts);
     }
 
@@ -359,7 +366,7 @@ export default function App(){
         <div style={{marginTop:12,display:'flex',gap:12,alignItems:'flex-start',flexWrap:'wrap'}}>
           <div style={{display:'flex',flexDirection:'column',gap:8}}>
             <div style={{display:'flex',gap:8,alignItems:'center'}}>
-              <label style={{display:'flex',alignItems:'center',gap:8,flexDirection:'column',alignItems:'flex-start'}}>
+              <label style={{display:'flex',gap:8,flexDirection:'column',alignItems:'flex-start'}}>
                 <div style={{display:'flex',alignItems:'center',gap:8}}>
                   <span>Match path:</span>
                   <input style={{marginLeft:6,padding:6,borderRadius:6}} value={aggregateMatchPath||'prodAttrs[*].attrname'} onChange={e=>setAggregateMatchPath(e.target.value)} />
@@ -369,7 +376,7 @@ export default function App(){
               <label style={{display:'flex',alignItems:'center',gap:8}}>Match value:
                 <input style={{marginLeft:6,padding:6,borderRadius:6}} value={aggregateMatchValue||'Options'} onChange={e=>setAggregateMatchValue(e.target.value)} />
               </label>
-              <label style={{display:'flex',alignItems:'center',gap:8,flexDirection:'column',alignItems:'flex-start'}}>
+              <label style={{display:'flex',gap:8,flexDirection:'column',alignItems:'flex-start'}}>
                 <div style={{display:'flex',alignItems:'center',gap:8}}>
                   <span>Count path:</span>
                   <input style={{marginLeft:6,padding:6,borderRadius:6}} value={aggregateCountPath||'prodAttrs[*].attrvalue'} onChange={e=>setAggregateCountPath(e.target.value)} />
