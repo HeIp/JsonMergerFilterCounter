@@ -7,12 +7,14 @@ function parsePath(path){
   if(!path) return parts;
   const raw = path.split('.');
   raw.forEach(token=>{
-    const re = /^([^\[\]]+)(?:\[(\d+)\])?$/;
+    const re = /^([^\[\]]+)(?:\[(\d+|\*)\])?$/;
     const m = token.match(re);
     if(m){
       const key = m[1];
-      if(typeof m[2] !== 'undefined') parts.push({key, index: parseInt(m[2],10)});
-      else parts.push({key});
+      if(typeof m[2] !== 'undefined'){
+        const idx = m[2] === '*' ? '*' : parseInt(m[2],10);
+        parts.push({key, index: idx});
+      } else parts.push({key});
     } else parts.push({key:token});
   });
   return parts;
@@ -108,8 +110,47 @@ export default function App(){
   const [pretty, setPretty] = useState(true);
   const [universalFilter, setUniversalFilter] = useState('');
   const [aggregateAttrName, setAggregateAttrName] = useState('Options');
+  const [aggregateMatchPath, setAggregateMatchPath] = useState('prodAttrs[*].attrname');
+  const [aggregateMatchValue, setAggregateMatchValue] = useState('Options');
+  const [aggregateCountPath, setAggregateCountPath] = useState('prodAttrs[*].attrvalue');
   const [aggregation, setAggregation] = useState({});
   const [focusId, setFocusId] = useState(null);
+
+  // validation helpers and presets for path syntax
+  function validatePath(path){
+    if(!path || !path.trim()) return 'Path required';
+    try{
+      const tokens = parsePath(path.trim());
+      if(!tokens.length) return 'Empty path';
+      for(const t of tokens){
+        if(!t.key || typeof t.key !== 'string') return 'Invalid token key';
+        if(typeof t.index !== 'undefined'){
+          if(!(t.index === '*' || (Number.isInteger(t.index) && t.index >= 0))) return 'Index must be a non-negative integer or *';
+        }
+      }
+      return null;
+    }catch(e){ return 'Invalid path'; }
+  }
+
+  const presets = [
+    {name:'prodAttrs (attrname -> attrvalue)',
+     matchPath:'prodAttrs[*].attrname', matchValue:'Options', countPath:'prodAttrs[*].attrvalue', universal:'prodAttrs[*].attrvalue'},
+    {name:'reviews (data.data[*] items)',
+     matchPath:'data.data[*].reviewid', matchValue:'', countPath:'data.data[*].productid', universal:'data.data[*].reviewid'},
+    {name:'items (generic items array)',
+     matchPath:'items[*].type', matchValue:'', countPath:'items[*].id', universal:'items[*].id'},
+  ];
+
+  function applyPreset(p){
+    setAggregateMatchPath(p.matchPath||'');
+    setAggregateMatchValue(p.matchValue||'');
+    setAggregateCountPath(p.countPath||'');
+    if(p.universal) setUniversalFilter(p.universal);
+  }
+
+  // inline validation values for rendering
+  const aggregateMatchPathError = validatePath(aggregateMatchPath);
+  const aggregateCountPathError = validatePath(aggregateCountPath);
 
   function addInput(){
     const newItem = {id:Date.now()+Math.random(), json:'', filter:'', error:null, lastApplied:null};
@@ -145,8 +186,8 @@ export default function App(){
     const merged = mergeParsedResponses(parsedList, {dedupe});
     const text = pretty ? JSON.stringify(merged, null, 2) : JSON.stringify(merged);
     setResult(text);
-    // compute aggregation counts based on merged items
-    computeAggregationFromItems(merged.data && Array.isArray(merged.data.data) ? merged.data.data : [], aggregateAttrName);
+    // compute aggregation counts based on merged items (use generic options)
+    computeAggregationFromOptions(merged.data && Array.isArray(merged.data.data) ? merged.data.data : [], aggregateMatchPath || `prodAttrs[*].attrname`, aggregateMatchValue || aggregateAttrName || 'Options', aggregateCountPath || `prodAttrs[*].attrvalue`);
     if(appliedInputId) updateInput(appliedInputId, {lastApplied: Date.now()});
   }
 
@@ -159,23 +200,109 @@ export default function App(){
   }
 
   function computeAggregationFromItems(items, attrName){
-    const counts = {};
-    if(!Array.isArray(items)){
-      setAggregation({});
-      return;
+      // New generic aggregation supports wildcard paths.
+      const counts = {};
+      if(!Array.isArray(items)){
+        setAggregation({});
+        return;
+      }
+      // default legacy behavior when attrName provided as simple string: treat as prodAttrs attrname
+      // but we now support using aggregateMatchPath and aggregateCountPath from state
+      // This function will be replaced by computeAggregationFromOptions when UI fields provided.
+      items.forEach(item=>{
+        if(!item || !Array.isArray(item.prodAttrs)) return;
+        item.prodAttrs.forEach(p=>{
+          if(!p) return;
+          if(p.attrname === attrName){
+            const v = String(typeof p.attrvalue === 'undefined' || p.attrvalue === null ? '' : p.attrvalue);
+            counts[v] = (counts[v] || 0) + 1;
+          }
+        });
+      });
+      setAggregation(counts);
+  }
+
+    // Helper: resolve values by path supporting wildcard [*]
+    function getValuesByPath(obj, path){
+      if(!path) return [];
+      const tokens = parsePath(path);
+      function walk(current, idx){
+        if(current == null) return [];
+        if(idx >= tokens.length) return [current];
+        const t = tokens[idx];
+        if(typeof t.index === 'undefined'){
+          return walk(current[t.key], idx+1);
+        }
+        // index present
+        if(t.index === '*'){
+          const arr = current[t.key];
+          if(!Array.isArray(arr)) return [];
+          let res = [];
+          for(const el of arr){ res = res.concat(walk(el, idx+1)); }
+          return res;
+        }
+        // numeric index
+        const child = current[t.key];
+        if(!Array.isArray(child)) return [];
+        const el = child[t.index];
+        return walk(el, idx+1);
+      }
+      return walk(obj, 0);
     }
-    items.forEach(item=>{
-      if(!item || !Array.isArray(item.prodAttrs)) return;
-      item.prodAttrs.forEach(p=>{
-        if(!p) return;
-        if(p.attrname === attrName){
-          const v = String(typeof p.attrvalue === 'undefined' || p.attrvalue === null ? '' : p.attrvalue);
-          counts[v] = (counts[v] || 0) + 1;
+
+    // Generic aggregation: iterate items and, if matchPath and countPath share same array root, pair elements
+    function computeAggregationFromOptions(items, matchPath, matchValue, countPath){
+      const counts = {};
+      if(!Array.isArray(items)){ setAggregation({}); return; }
+
+      // find array root prefix (string before first [*]) for match and count
+      function rootBeforeWildcard(path){
+        const i = path.indexOf('[*]');
+        if(i===-1) return null;
+        return path.slice(0, i);
+      }
+
+      const matchRoot = rootBeforeWildcard(matchPath);
+      const countRoot = rootBeforeWildcard(countPath);
+
+      items.forEach(item=>{
+        if(matchRoot && countRoot && matchRoot === countRoot){
+          // iterate the shared array
+          const arr = getValuesByPath(item, matchRoot + '[*]');
+          // get actual array elements at the root
+          // getValuesByPath returns array of elements after walking further; to get elements themselves, fetch root array
+          const rootTokens = parsePath(matchRoot);
+          const rootArr = (function(){
+            let cur = item;
+            for(const rt of rootTokens){ if(cur==null) return null; cur = cur[rt.key]; if(typeof rt.index !== 'undefined'){ if(rt.index==='*') return cur; else cur = cur[rt.index]; } }
+            return cur;
+          })();
+          if(!Array.isArray(rootArr)) return;
+          // determine remainder paths after root
+          const remMatch = matchPath.slice(matchRoot.length + 3); // remove '[*]'
+          const remCount = countPath.slice(countRoot.length + 3);
+          rootArr.forEach(el=>{
+            const mvals = remMatch ? getValuesByPath(el, remMatch) : [el];
+            const cvals = remCount ? getValuesByPath(el, remCount) : [el];
+            // if any match value equals matchValue, count corresponding cvals
+            const matched = mvals.some(v=>String(v) === String(matchValue));
+            if(matched){
+              cvals.forEach(cv=>{ const key = String(cv==null ? '' : cv); counts[key] = (counts[key]||0) + 1; });
+            }
+          });
+        } else {
+          // fallback: if any value at matchPath equals matchValue, then count all values at countPath
+          const mvals = getValuesByPath(item, matchPath);
+          const found = mvals.some(v=>String(v) === String(matchValue));
+          if(found){
+            const cvals = getValuesByPath(item, countPath);
+            cvals.forEach(cv=>{ const key = String(cv==null ? '' : cv); counts[key] = (counts[key]||0) + 1; });
+          }
         }
       });
-    });
-    setAggregation(counts);
-  }
+
+      setAggregation(counts);
+    }
 
   function copyResult(){ navigator.clipboard.writeText(result).then(()=>alert('Copied')); }
   function downloadResult(){ const blob = new Blob([result], {type:'application/json'}); const url = URL.createObjectURL(blob); const a = document.createElement('a'); a.href=url; a.download='merged.json'; document.body.appendChild(a); a.click(); a.remove(); URL.revokeObjectURL(url); }
@@ -229,22 +356,48 @@ export default function App(){
           <button onClick={()=>merge()}>Apply universal</button>
         </div>
 
-        <div style={{marginTop:12,display:'flex',gap:12,alignItems:'center',flexWrap:'wrap'}}>
-          <label style={{display:'flex',alignItems:'center',gap:8}}>Aggregate prodAttrs where <code>attrname</code> =
-            <input style={{marginLeft:6,padding:6,borderRadius:6}} value={aggregateAttrName} onChange={e=>setAggregateAttrName(e.target.value)} />
-          </label>
-          <button onClick={()=>(
-            // compute from current result if available
-            (()=>{
-              try{
-                const parsed = result ? JSON.parse(result) : null;
-                const items = parsed && parsed.data && Array.isArray(parsed.data.data) ? parsed.data.data : [];
-                computeAggregationFromItems(items, aggregateAttrName);
-              }catch(e){
-                // if result not JSON, do nothing
-              }
-            })()
-          )}>Compute counts</button>
+        <div style={{marginTop:12,display:'flex',gap:12,alignItems:'flex-start',flexWrap:'wrap'}}>
+          <div style={{display:'flex',flexDirection:'column',gap:8}}>
+            <div style={{display:'flex',gap:8,alignItems:'center'}}>
+              <label style={{display:'flex',alignItems:'center',gap:8,flexDirection:'column',alignItems:'flex-start'}}>
+                <div style={{display:'flex',alignItems:'center',gap:8}}>
+                  <span>Match path:</span>
+                  <input style={{marginLeft:6,padding:6,borderRadius:6}} value={aggregateMatchPath||'prodAttrs[*].attrname'} onChange={e=>setAggregateMatchPath(e.target.value)} />
+                </div>
+                {aggregateMatchPathError ? <div style={{color:'#b91c1c',fontSize:12,marginTop:4}}>{aggregateMatchPathError}</div> : null}
+              </label>
+              <label style={{display:'flex',alignItems:'center',gap:8}}>Match value:
+                <input style={{marginLeft:6,padding:6,borderRadius:6}} value={aggregateMatchValue||'Options'} onChange={e=>setAggregateMatchValue(e.target.value)} />
+              </label>
+              <label style={{display:'flex',alignItems:'center',gap:8,flexDirection:'column',alignItems:'flex-start'}}>
+                <div style={{display:'flex',alignItems:'center',gap:8}}>
+                  <span>Count path:</span>
+                  <input style={{marginLeft:6,padding:6,borderRadius:6}} value={aggregateCountPath||'prodAttrs[*].attrvalue'} onChange={e=>setAggregateCountPath(e.target.value)} />
+                </div>
+                {aggregateCountPathError ? <div style={{color:'#b91c1c',fontSize:12,marginTop:4}}>{aggregateCountPathError}</div> : null}
+              </label>
+              <button disabled={!!(aggregateMatchPathError || aggregateCountPathError)} title={aggregateMatchPathError || aggregateCountPathError ? 'Fix path errors' : 'Compute counts'} onClick={()=>{
+                try{
+                  const parsed = result ? JSON.parse(result) : null;
+                  const items = parsed && parsed.data && Array.isArray(parsed.data.data) ? parsed.data.data : [];
+                  computeAggregationFromOptions(items, aggregateMatchPath||'prodAttrs[*].attrname', aggregateMatchValue||'Options', aggregateCountPath||'prodAttrs[*].attrvalue');
+                }catch(e){ }
+              }}>{(aggregateMatchPathError || aggregateCountPathError) ? 'Fix paths' : 'Compute counts'}</button>
+            </div>
+            <div style={{color:'#6b7280',fontSize:13}}>
+              <div><strong>Path syntax</strong>: dot-separated keys. Use array index like <code>[0]</code> or wildcard <code>[*]</code> for all elements. Prefixes like <code>data.data.</code> are optional — the merger trims them when applying filters.</div>
+              <div style={{marginTop:6}}>Examples: <code>prodAttrs[*].attrname</code>, <code>data.data[*].reviewid</code>, <code>items[*].id</code></div>
+            </div>
+          </div>
+
+          <div style={{minWidth:260,display:'flex',flexDirection:'column',gap:8}}>
+            <label style={{fontSize:13}}>Presets</label>
+            <select onChange={e=>{ const p = presets[Number(e.target.value)]; if(p) applyPreset(p); }}>
+              <option value="">— choose preset —</option>
+              {presets.map((p,i)=> <option key={p.name} value={i}>{p.name}</option>)}
+            </select>
+            <div style={{color:'#9aa6b2',fontSize:13}}>Pick a preset to fill paths and the universal filter. You can edit the values afterwards.</div>
+          </div>
         </div>
       </div>
 

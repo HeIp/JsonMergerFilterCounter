@@ -90,6 +90,10 @@ export default function InputBlock({id,json,filter,error,lastApplied,onChange,on
           <button onClick={onApply}>Apply</button>
         </label>
       </div>
+      <div style={{marginTop:6,color:'#6b7280',fontSize:12}}>
+        <div><strong>Path syntax</strong>: dot-separated keys. Use <code>[0]</code> to pick an index or <code>[*]</code> to match all elements in an array. Prefixes like <code>data.data.</code> are optional — filters are applied to array items under <code>data.data</code> automatically.</div>
+        <div style={{marginTop:4}}>Examples: <code>prodAttrs[*].attrvalue</code>, <code>content</code>, <code>prodAttrs[0].attrvalue</code></div>
+      </div>
       <div className="error" aria-live="polite">{error || ''}</div>
       <div style={{marginTop:6,color:'#9aa6b2',fontSize:12}}>{lastApplied ? 'Last applied: '+(new Date(lastApplied)).toLocaleString() : ''}</div>
     </div>
